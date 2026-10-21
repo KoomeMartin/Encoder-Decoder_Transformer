@@ -1,5 +1,6 @@
 from typing import Literal, Tuple, Optional
 import os
+from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 from tqdm import tqdm
 import torch
@@ -135,11 +136,16 @@ class ASRDataset(Dataset):
             mean = torch.zeros(self.config['num_feats'], dtype=torch.float64)
             M2 = torch.zeros(self.config['num_feats'], dtype=torch.float64)
 
+        # Read the files in parallel, in order, ahead of the loop below (config 'load_threads').
+        # On network-mounted storage such as Kaggle inputs each read is latency-bound, so reading
+        # many at once is far faster than one at a time (hours -> minutes for train-clean-100).
+        prefetched = self._prefetch(self.config.get('load_threads', 32))
+
         print(f"Loading data for {partition} partition...")
         for i in tqdm(range(self.length)):
-            # Load features
+            # Load features (and the transcript, read in the same prefetch)
             # Features are of shape (num_feats, time)
-            feat = np.load(os.path.join(self.fbank_dir, self.fbank_files[i]))
+            feat, transcript = next(prefetched)
 
             # Truncate features to num_feats set by you in the config
             feat = feat[:self.config['num_feats'], :]
@@ -165,10 +171,8 @@ class ASRDataset(Dataset):
                 M2 += (delta * delta2).sum(dim=1)        # (num_feats,)
 
             if self.partition != "test-clean":
-                # Load the transcript
+                # Load the transcript: already loaded by _read_utterance via the prefetch above
                 # Important Note: This is a very important line of code and you should check whether your transcript is correct after loading (and very dependent in evaluation)
-                # Transcripts are stored as an array of single characters, so join them back into a string
-                transcript = ''.join(np.load(os.path.join(self.text_dir, self.text_files[i])))
 
                 # Track character count (before tokenization)
                 self.total_chars += len(transcript)
@@ -217,6 +221,28 @@ class ASRDataset(Dataset):
             freq_mask_param=config['specaug_conf']['freq_mask_width_range'],
             iid_masks=True
         )
+
+    def _read_utterance(self, i: int) -> Tuple[np.ndarray, Optional[str]]:
+        """
+        Load utterance i from disk.
+        Returns:
+            tuple: (features of shape (num_feats, time), transcript string or None for test-clean)
+        """
+        feat = np.load(os.path.join(self.fbank_dir, self.fbank_files[i]))
+        transcript = None
+        if self.partition != "test-clean":
+            # Transcripts are stored as an array of single characters, so join them back into a string
+            transcript = ''.join(np.load(os.path.join(self.text_dir, self.text_files[i])))
+        return feat, transcript
+
+    def _prefetch(self, num_threads: int, chunk_size: int = 512):
+        """
+        Yield _read_utterance(i) for i = 0 .. length-1 in order, with up to num_threads reads in flight.
+        Works in chunks so at most chunk_size utterances are buffered in memory at a time.
+        """
+        with ThreadPoolExecutor(max_workers=max(1, int(num_threads))) as pool:
+            for start in range(0, self.length, chunk_size):
+                yield from pool.map(self._read_utterance, range(start, min(start + chunk_size, self.length)))
 
     def get_avg_chars_per_token(self):
         '''
