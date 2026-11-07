@@ -1,0 +1,184 @@
+# Final submitted configuration (W&B run yr0gfal7): 10k BPE, 26.47M parameters, 70 epochs on one V100 32 GB.
+# Use it from the notebook with CONFIG_PATH = "configs/final.yaml" in the config-loading cell.
+Name                      : "mkoome"   # your name or Andrew ID (used in run names)
+
+###### Tokenization ------------------------------------------------------------
+tokenization:
+  token_type                : "10k"       # [char, 1k, 5k, 10k]. 10k: the shortest targets (about 4.6 characters per token)
+  token_map :
+      'char': 'hw3lib/data/tokenizer_jsons/tokenizer_char.json'
+      '1k'  : 'hw3lib/data/tokenizer_jsons/tokenizer_1000.json'
+      '5k'  : 'hw3lib/data/tokenizer_jsons/tokenizer_5000.json'
+      '10k' : 'hw3lib/data/tokenizer_jsons/tokenizer_10000.json'
+
+###### Dataset -----------------------------------------------------------------
+data:
+  root                 : "auto"             # "auto" finds the Kaggle / Colab / PSC copy, or give the path to hw3p2_data
+  train_partition      : "train-clean-100"  # paired speech and text, for training
+  val_partition        : "dev-clean"        # paired speech and text, for validation only (never trained on)
+  test_partition       : "test-clean"       # speech only, no transcripts
+  subset               : 1.0                # Fraction of each split to load (QUICK_CHECK uses 0.05)
+  batch_size           : 32                 # Utterances per step; x gradient_accumulation_steps = effective batch
+  NUM_WORKERS          : 2                  # DataLoader workers (0 is used automatically on CPU)
+  norm                 : 'global_mvn'       # ['global_mvn', 'cepstral', 'none']
+  num_feats            : 80
+  feat_dtype           : 'float16'          # Features kept in RAM as float16 (~6 GB instead of ~12 GB). ['float16', 'float32']
+  load_threads         : 32                 # Files read in parallel while loading (Kaggle inputs are slow per file: ~3 h one at a time vs ~6 min)
+
+  ###### SpecAugment (training batches only) ------------------------------------
+  specaug                   : True
+  specaug_conf:
+    apply_freq_mask         : True
+    freq_mask_width_range   : 20      # Max frequency bins per mask (of 80)
+    num_freq_mask           : 2
+    apply_time_mask         : True
+    time_mask_width_range   : 50      # Max frames per mask (10 ms each, before downsampling)
+    num_time_mask           : 4
+
+###### Network Specs -------------------------------------------------------------
+model: # Pre-norm encoder-decoder Transformer: 26.47M parameters with these settings (limit 30M)
+  # Speech embedding parameters
+  input_dim: 80              # Set from data.num_feats when the model is built
+  time_reduction: 4          # Conv front-end shortens time 4x (T -> T/4)
+  reduction_method: 'conv'   # ['lstm', 'conv', 'both']
+
+  # Architecture parameters
+  d_model: 256           # Model dimension
+  num_encoder_layers: 12 # Encoder depth: modelling the audio is the hard part
+  num_decoder_layers: 6  # Decoder depth
+  num_encoder_heads: 4   # head_dim = d_model / heads = 64
+  num_decoder_heads: 4
+  d_ff_encoder: 1024     # SwiGLU uses 2/3 of this (682), so its parameter count matches GELU
+  d_ff_decoder: 1024
+  encoder_pos_encoding: 'rope'  # ['rope', 'sinusoidal', 'none']
+  decoder_pos_encoding: 'rope'  # ['rope', 'sinusoidal', 'none']
+  norm_type: 'rmsnorm'          # ['rmsnorm', 'layernorm']
+  ffn_type: 'swiglu'            # ['swiglu', 'gelu']
+  qk_norm: True                 # Normalize queries and keys: bounded attention logits, steadier fp16 training
+
+  # Regularization
+  dropout: 0.1          # Dropout rate
+  layer_drop_rate: 0.0  # Randomly skip whole layers in training (0.05-0.1 can help long runs)
+  weight_tying: True    # Share the target embedding and output projection weights
+
+###### Training ------------------------------------------------------------------
+training:
+  strategy                    : "cold_start" # ["cold_start", "progressive"] (progressive runs the stages below first)
+  epochs                      : 70          # Full-model epochs (progressive stages are added on top)
+  time_budget_hours           : 10.5         # Stop training before this many hours since the notebook started (Kaggle allows 12). null = no limit
+  seed                        : 11785
+  run_name                    : "auto"       # "auto" builds a descriptive name, or set your own
+  use_wandb                   : True         # Required: the Kaggle submission message and the Gradescope backend read your W&B runs
+  wandb_project               : "hw3p2-asr"  # your W&B project name
+  wandb_run_id                : "none"       # Run ID (from the run URL) to keep logging into when resuming. "none" = new run
+  resume_checkpoint           : "none"       # "none" | path to a .pth | "wandb:entity/project/run_id" (downloads that run's last checkpoint)
+  gradient_accumulation_steps : 2            # Effective batch = 32 x 2 = 64
+  grad_clip_norm              : 1.0          # Clip the global gradient norm (null to disable)
+
+###### Progressive training (only used when training.strategy = "progressive") -----
+progressive:
+  stages:
+    - name: "Stage 1: 4 encoder + 2 decoder layers, 30% of the data"
+      epochs: 3
+      encoder_active_layers: [0, 1, 2, 3]
+      decoder_active_layers: [0, 1]
+      encoder_freeze: [False, False, False, False]
+      decoder_freeze: [False, False]
+      dropout: 0.0
+      label_smoothing: 0.0
+      data_subset: 0.3
+    - name: "Stage 2: 8 encoder + 4 decoder layers, 60% of the data"
+      epochs: 3
+      encoder_active_layers: [0, 1, 2, 3, 4, 5, 6, 7]
+      decoder_active_layers: [0, 1, 2, 3]
+      encoder_freeze: [False, False, False, False, False, False, False, False]
+      decoder_freeze: [False, False, False, False]
+      dropout: 0.05
+      label_smoothing: 0.05
+      data_subset: 0.6
+
+###### Loss ----------------------------------------------------------------------
+loss:
+  label_smoothing: 0.1
+  ctc_weight: 0.3        # Total loss = CE + ctc_weight x CTC
+
+###### Optimizer -----------------------------------------------------------------
+optimizer:
+  name: "adamw" # Options: sgd, adam, adamw
+  lr: 1.0e-3    # Peak learning rate, reached after warmup. Drop to 5.0e-4 if the loss spikes or turns NaN
+
+  # Common parameters
+  weight_decay: 0.01
+
+  # Parameter groups: [] = one group for the whole model. A custom group looks like:
+  #   - name: ffn
+  #     patterns: ["ffn"]   # parameters whose name contains "ffn"
+  #     lr: 5.0e-4
+  #     layer_decay: {enabled: False, decay_rate: 0.8}
+  param_groups: []
+
+  # Layer-wise learning rates
+  layer_decay:
+    enabled: False
+    decay_rate: 0.75
+
+  # SGD specific parameters
+  sgd:
+    momentum: 0.9
+    nesterov: True
+    dampening: 0
+
+  # Adam specific parameters
+  adam:
+    betas: [0.9, 0.999]
+    eps: 1.0e-8
+    amsgrad: False
+
+  # AdamW specific parameters
+  adamw:
+    betas: [0.9, 0.98]
+    eps: 1.0e-8
+    amsgrad: False
+
+###### Scheduler -----------------------------------------------------------------
+scheduler:
+  name: "cosine"  # Options: reduce_lr, cosine, cosine_warm
+
+  # ReduceLROnPlateau specific parameters (cannot be combined with warmup)
+  reduce_lr:
+    mode: "min"  # Options: min, max
+    factor: 0.1  # Factor to reduce learning rate by
+    patience: 10  # Number of epochs with no improvement after which LR will be reduced
+    threshold: 0.0001  # Threshold for measuring the new optimum
+    threshold_mode: "rel"  # Options: rel, abs
+    cooldown: 0  # Number of epochs to wait before resuming normal operation
+    min_lr: 0.0000001  # Minimum learning rate
+    eps: 1.0e-8  # Minimal decay applied to lr
+
+  # CosineAnnealingLR specific parameters
+  cosine:
+    T_max: "auto"   # Epochs of cosine decay after warmup. "auto" = total epochs - warmup epochs
+    eta_min: 1.0e-6 # Final learning rate
+    last_epoch: -1
+
+  # CosineAnnealingWarmRestarts specific parameters
+  cosine_warm:
+    T_0: 10    # Epochs until the first restart
+    T_mult: 2  # Factor increasing T_i after each restart
+    eta_min: 1.0e-6
+    last_epoch: -1
+
+  # Linear warmup (can be used with cosine or cosine_warm)
+  warmup:
+    enabled: True
+    epochs: 4          # Warm up over the first 4 epochs
+    start_factor: 0.01 # Start at 1% of lr
+    end_factor: 1.0
+
+###### Inference -----------------------------------------------------------------
+inference:
+  checkpoint: "auto"       # Weights used for the test set: "auto" (best vs last, compared on full dev, greedy) | "best" | "last" | a path
+  beam_width: "auto"       # 1 = greedy (required minimum), >1 = beam search, "auto" = best of dev_beam_widths on dev
+  dev_beam_widths: [1, 5]  # Beam widths compared on the full dev set
+  temperature: 1.0
+  repeat_penalty: 1.0

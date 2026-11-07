@@ -1,0 +1,100 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 870" width="960" height="870" font-family='system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif' role="img" aria-labelledby="title desc">
+<title id="title">Encoder-decoder Transformer for speech recognition: data pipeline and model</title>
+<desc id="desc">Audio lane: 80-bin log-mel filterbank, global mean-variance normalisation, SpecAugment during training, padding into a batch. Text lane: transcript, 10k BPE tokens, shifted and golden copies. Model: Conv2D speech embedding that shortens time 4 times, 12 pre-norm encoder layers with bidirectional self-attention, a final LayerNorm, and a CTC head; a tied token embedding, 6 pre-norm decoder layers with causal self-attention, cross-attention into the encoder output and SwiGLU, a final LayerNorm and a tied output projection. Loss is cross-entropy plus 0.3 times CTC. 26.47 million parameters.</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#898781"/></marker></defs>
+<rect width="960" height="870" rx="16" fill="#fcfcfb"/>
+<text x="40.0" y="40.0" font-size="12" font-weight="700" fill="#898781" text-anchor="start">1 · DATA PIPELINE</text>
+<text x="40.0" y="64.0" font-size="11" font-weight="600" fill="#898781" text-anchor="start">audio</text>
+<text x="40.0" y="168.0" font-size="11" font-weight="600" fill="#898781" text-anchor="start">text</text>
+<rect x="40.0" y="72.0" width="178.0" height="74.0" rx="10" fill="#f4f3ef" stroke="#c3c2b7" stroke-width="1.5"/>
+<text x="129.0" y="95.0" font-size="12.5" font-weight="600" fill="#0b0b0b" text-anchor="middle">Log-mel filterbank</text>
+<text x="129.0" y="118.0" font-size="12.5" font-weight="700" fill="#0b0b0b" text-anchor="middle" font-family='ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", monospace'>(80, T)</text>
+<text x="129.0" y="136.0" font-size="11" font-weight="400" fill="#52514e" text-anchor="middle">dB, clipped to [−80, 0]</text>
+<line x1="221.0" y1="109.0" x2="248.0" y2="109.0" stroke="#898781" stroke-width="1.5" marker-end="url(#arrow)"/>
+<rect x="252.0" y="72.0" width="178.0" height="74.0" rx="10" fill="#f4f3ef" stroke="#c3c2b7" stroke-width="1.5"/>
+<text x="341.0" y="95.0" font-size="12.5" font-weight="600" fill="#0b0b0b" text-anchor="middle">Global MVN</text>
+<text x="341.0" y="118.0" font-size="12.5" font-weight="700" fill="#0b0b0b" text-anchor="middle" font-family='ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", monospace'>(x − μ) / σ</text>
+<text x="341.0" y="136.0" font-size="11" font-weight="400" fill="#52514e" text-anchor="middle">per mel bin, train stats</text>
+<line x1="433.0" y1="109.0" x2="460.0" y2="109.0" stroke="#898781" stroke-width="1.5" marker-end="url(#arrow)"/>
+<rect x="464.0" y="72.0" width="178.0" height="74.0" rx="10" fill="#fbe0d4" stroke="#eb6834" stroke-width="1.5" stroke-dasharray="5 4"/>
+<text x="553.0" y="95.0" font-size="12.5" font-weight="600" fill="#0b0b0b" text-anchor="middle">SpecAugment</text>
+<text x="553.0" y="118.0" font-size="12.5" font-weight="700" fill="#0b0b0b" text-anchor="middle" font-family='ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", monospace'>2 F-masks · 4 T-masks</text>
+<text x="553.0" y="136.0" font-size="11" font-weight="400" fill="#52514e" text-anchor="middle">training batches only</text>
+<line x1="645.0" y1="109.0" x2="672.0" y2="109.0" stroke="#898781" stroke-width="1.5" marker-end="url(#arrow)"/>
+<rect x="676.0" y="72.0" width="178.0" height="74.0" rx="10" fill="#f4f3ef" stroke="#c3c2b7" stroke-width="1.5"/>
+<text x="765.0" y="95.0" font-size="12.5" font-weight="600" fill="#0b0b0b" text-anchor="middle">Pad + batch</text>
+<text x="765.0" y="118.0" font-size="12.5" font-weight="700" fill="#0b0b0b" text-anchor="middle" font-family='ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", monospace'>(B, T_max, 80)</text>
+<text x="765.0" y="136.0" font-size="11" font-weight="400" fill="#52514e" text-anchor="middle">+ true lengths</text>
+<rect x="40.0" y="176.0" width="178.0" height="74.0" rx="10" fill="#f4f3ef" stroke="#c3c2b7" stroke-width="1.5"/>
+<text x="129.0" y="199.0" font-size="12.5" font-weight="600" fill="#0b0b0b" text-anchor="middle">Transcript</text>
+<text x="129.0" y="222.0" font-size="12.5" font-weight="700" fill="#0b0b0b" text-anchor="middle" font-family='ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", monospace'>201 characters</text>
+<text x="129.0" y="240.0" font-size="11" font-weight="400" fill="#52514e" text-anchor="middle">e.g. CHAPTER ONE MISSUS …</text>
+<line x1="221.0" y1="213.0" x2="248.0" y2="213.0" stroke="#898781" stroke-width="1.5" marker-end="url(#arrow)"/>
+<rect x="252.0" y="176.0" width="178.0" height="74.0" rx="10" fill="#f4f3ef" stroke="#c3c2b7" stroke-width="1.5"/>
+<text x="341.0" y="199.0" font-size="12.5" font-weight="600" fill="#0b0b0b" text-anchor="middle">10k BPE tokenizer</text>
+<text x="341.0" y="222.0" font-size="12.5" font-weight="700" fill="#0b0b0b" text-anchor="middle" font-family='ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", monospace'>48 tokens</text>
+<text x="341.0" y="240.0" font-size="11" font-weight="400" fill="#52514e" text-anchor="middle">PAD 0 · SOS 3 · EOS 4</text>
+<line x1="433.0" y1="213.0" x2="460.0" y2="213.0" stroke="#898781" stroke-width="1.5" marker-end="url(#arrow)"/>
+<rect x="464.0" y="176.0" width="178.0" height="74.0" rx="10" fill="#f4f3ef" stroke="#c3c2b7" stroke-width="1.5"/>
+<text x="553.0" y="199.0" font-size="12.5" font-weight="600" fill="#0b0b0b" text-anchor="middle">Shift for teacher forcing</text>
+<text x="553.0" y="222.0" font-size="12.5" font-weight="700" fill="#0b0b0b" text-anchor="middle" font-family='ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", monospace'>(B, L)</text>
+<text x="553.0" y="240.0" font-size="11" font-weight="400" fill="#52514e" text-anchor="middle">[SOS]+y   /   y+[EOS]</text>
+<rect x="24.0" y="290.0" width="912.0" height="556.0" rx="14" fill="none" stroke="#e1e0d9" stroke-width="1.5"/>
+<text x="480.0" y="318.0" font-size="12" font-weight="700" fill="#898781" text-anchor="middle">2 · MODEL  ·  26.47 M parameters</text>
+<path d="M765.0,148 L765.0,276 L708.0,276 L708.0,338" fill="none" stroke="#898781" stroke-width="1.5" marker-end="url(#arrow)"/>
+<path d="M553.0,252 L553.0,286 L252.0,286 L252.0,338" fill="none" stroke="#898781" stroke-width="1.5" marker-end="url(#arrow)"/>
+<text x="64.0" y="332.0" font-size="11" font-weight="700" fill="#eb6834" text-anchor="start">DECODER · writes the text</text>
+<text x="520.0" y="332.0" font-size="11" font-weight="700" fill="#2a78d6" text-anchor="start">ENCODER · reads the audio</text>
+<rect x="520.0" y="342.0" width="376.0" height="92.0" rx="10" fill="#f4f3ef" stroke="#2a78d6" stroke-width="1.6"/>
+<text x="534.0" y="364.0" font-size="13" font-weight="700" fill="#0b0b0b" text-anchor="start">Conv2D speech embedding</text>
+<text x="534.0" y="386.0" font-size="11.5" font-weight="400" fill="#52514e" text-anchor="start">2 × [Conv2d 3×3, stride (2, 1) → GELU], 1 → 256 ch</text>
+<text x="534.0" y="405.0" font-size="11.5" font-weight="400" fill="#52514e" text-anchor="start">flatten 256 × 76 → Linear 19,456 → 256 · T → T/4</text>
+<text x="882.0" y="424.0" font-size="11" font-weight="600" fill="#898781" text-anchor="end" font-family='ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", monospace'>5,573,632</text>
+<rect x="520.0" y="462.0" width="376.0" height="110.0" rx="10" fill="#f4f3ef" stroke="#2a78d6" stroke-width="1.6"/>
+<text x="534.0" y="484.0" font-size="13" font-weight="700" fill="#0b0b0b" text-anchor="start">Encoder layer (pre-norm)</text>
+<text x="882.0" y="484.0" font-size="13" font-weight="700" fill="#2a78d6" text-anchor="end" font-family='ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", monospace'>× 12</text>
+<text x="534.0" y="506.0" font-size="11.5" font-weight="400" fill="#52514e" text-anchor="start">x + MHSA(RMSNorm(x))   bidirectional, pad mask</text>
+<text x="534.0" y="525.0" font-size="11.5" font-weight="400" fill="#52514e" text-anchor="start">x + SwiGLU(RMSNorm(x)) hidden 682</text>
+<text x="534.0" y="544.0" font-size="11.5" font-weight="400" fill="#52514e" text-anchor="start">4 heads × 64 · RoPE · QK-norm · dropout 0.1</text>
+<text x="882.0" y="562.0" font-size="11" font-weight="600" fill="#898781" text-anchor="end" font-family='ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", monospace'>12 × 787,584</text>
+<rect x="520.0" y="600.0" width="376.0" height="52.0" rx="10" fill="#f4f3ef" stroke="#2a78d6" stroke-width="1.6"/>
+<text x="534.0" y="622.0" font-size="13" font-weight="700" fill="#0b0b0b" text-anchor="start">Final LayerNorm → memory (B, T/4, 256)</text>
+<text x="882.0" y="642.0" font-size="11" font-weight="600" fill="#898781" text-anchor="end" font-family='ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", monospace'>512</text>
+<rect x="520.0" y="680.0" width="376.0" height="70.0" rx="10" fill="#f4f3ef" stroke="#2a78d6" stroke-width="1.6"/>
+<text x="534.0" y="702.0" font-size="13" font-weight="700" fill="#0b0b0b" text-anchor="start">CTC head: Linear 256 → 10,000 + LogSoftmax</text>
+<text x="534.0" y="724.0" font-size="11.5" font-weight="400" fill="#52514e" text-anchor="start">frame-wise log-probs (T/4, B, 10,000), blank = id 0</text>
+<text x="882.0" y="740.0" font-size="11" font-weight="600" fill="#898781" text-anchor="end" font-family='ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", monospace'>2,570,000</text>
+<line x1="708.0" y1="436.0" x2="708.0" y2="458.0" stroke="#898781" stroke-width="1.5" marker-end="url(#arrow)"/>
+<line x1="708.0" y1="574.0" x2="708.0" y2="596.0" stroke="#898781" stroke-width="1.5" marker-end="url(#arrow)"/>
+<line x1="708.0" y1="654.0" x2="708.0" y2="676.0" stroke="#898781" stroke-width="1.5" marker-end="url(#arrow)"/>
+<rect x="64.0" y="342.0" width="376.0" height="92.0" rx="10" fill="#f4f3ef" stroke="#eb6834" stroke-width="1.6"/>
+<text x="78.0" y="364.0" font-size="13" font-weight="700" fill="#0b0b0b" text-anchor="start">Token embedding</text>
+<text x="78.0" y="386.0" font-size="11.5" font-weight="400" fill="#52514e" text-anchor="start">10,000 × 256 lookup of the shifted transcript</text>
+<text x="78.0" y="405.0" font-size="11.5" font-weight="400" fill="#52514e" text-anchor="start">weights shared with the output projection</text>
+<text x="426.0" y="424.0" font-size="11" font-weight="600" fill="#898781" text-anchor="end" font-family='ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", monospace'>2,560,000</text>
+<rect x="64.0" y="462.0" width="376.0" height="150.0" rx="10" fill="#f4f3ef" stroke="#eb6834" stroke-width="1.6"/>
+<text x="78.0" y="484.0" font-size="13" font-weight="700" fill="#0b0b0b" text-anchor="start">Decoder layer (pre-norm)</text>
+<text x="426.0" y="484.0" font-size="13" font-weight="700" fill="#eb6834" text-anchor="end" font-family='ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", monospace'>× 6</text>
+<text x="78.0" y="506.0" font-size="11.5" font-weight="400" fill="#52514e" text-anchor="start">x + MHSA(RMSNorm(x))   causal + pad mask</text>
+<text x="78.0" y="525.0" font-size="11.5" font-weight="400" fill="#52514e" text-anchor="start">x + CrossAttn(RMSNorm(x), memory)</text>
+<text x="78.0" y="544.0" font-size="11.5" font-weight="400" fill="#52514e" text-anchor="start">    Q from the text · K, V from the encoder memory</text>
+<text x="78.0" y="563.0" font-size="11.5" font-weight="400" fill="#52514e" text-anchor="start">x + SwiGLU(RMSNorm(x)) hidden 682</text>
+<text x="78.0" y="582.0" font-size="11.5" font-weight="400" fill="#52514e" text-anchor="start">4 heads × 64 · RoPE · QK-norm · dropout 0.1</text>
+<text x="426.0" y="602.0" font-size="11" font-weight="600" fill="#898781" text-anchor="end" font-family='ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", monospace'>6 × 1,051,136</text>
+<rect x="64.0" y="640.0" width="376.0" height="70.0" rx="10" fill="#f4f3ef" stroke="#eb6834" stroke-width="1.6"/>
+<text x="78.0" y="662.0" font-size="13" font-weight="700" fill="#0b0b0b" text-anchor="start">Final LayerNorm → Linear 256 → 10,000</text>
+<text x="78.0" y="684.0" font-size="11.5" font-weight="400" fill="#52514e" text-anchor="start">logits (B, L, 10,000); weight tied to the embedding</text>
+<text x="426.0" y="700.0" font-size="11" font-weight="600" fill="#898781" text-anchor="end" font-family='ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", monospace'>512 + 10,000</text>
+<line x1="252.0" y1="436.0" x2="252.0" y2="458.0" stroke="#898781" stroke-width="1.5" marker-end="url(#arrow)"/>
+<line x1="252.0" y1="614.0" x2="252.0" y2="636.0" stroke="#898781" stroke-width="1.5" marker-end="url(#arrow)"/>
+<path d="M518,626 L480.0,626 L480.0,521 L444,521" fill="none" stroke="#2a78d6" stroke-width="1.8" marker-end="url(#arrow)"/>
+<text x="486.0" y="577.5" font-size="11" font-weight="700" fill="#2a78d6" text-anchor="start" font-family='ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", monospace'>K, V</text>
+<line x1="708.0" y1="752.0" x2="708.0" y2="768.0" stroke="#898781" stroke-width="1.5" marker-end="url(#arrow)"/>
+<line x1="252.0" y1="712.0" x2="252.0" y2="768.0" stroke="#898781" stroke-width="1.5" marker-end="url(#arrow)"/>
+<rect x="137.2" y="772.0" width="229.5" height="28.0" rx="6" fill="#fbe0d4" stroke="#eb6834" stroke-width="1.2"/>
+<text x="252.0" y="790.5" font-size="12.5" font-weight="600" fill="#0b0b0b" text-anchor="middle" font-family='ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", monospace'>Cross-entropy, smoothing 0.1</text>
+<rect x="646.6" y="772.0" width="122.8" height="28.0" rx="6" fill="#cde2fb" stroke="#2a78d6" stroke-width="1.2"/>
+<text x="708.0" y="790.5" font-size="12.5" font-weight="600" fill="#0b0b0b" text-anchor="middle" font-family='ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", monospace'>CTC loss × 0.3</text>
+<text x="480.0" y="792.0" font-size="18" font-weight="700" fill="#0b0b0b" text-anchor="middle">+</text>
+<text x="480.0" y="830.0" font-size="12.5" font-weight="600" fill="#52514e" text-anchor="middle">Total loss = CE + 0.3 · CTC.   Inference: encode once, then beam search (width 5) from [SOS] until [EOS].</text>
+</svg>
